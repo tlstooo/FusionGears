@@ -121,6 +121,20 @@ The `demo/FusionGearsDemo` script shows the check at work:
    - **a faulty gear train**: a reversed link, a z18 gear in mesh without a link and three z21 gears in a triangle; the check finds all three.
 3. At the end the script shows what the check found. Run the check yourself in each document.
 
+### Walking through the faulty gear train
+
+Run the animation (**Assemble → Animate Joint Relationships**, or drag the large z30 gear with the mouse) and compare it with what the check reports:
+
+| What the animation shows | Mistake | How to fix it |
+|---|---|---|
+| The leftmost gear **Extra z18 (no link)** stands still although it touches the driver z15 | its joint has no motion link — check: "are in mesh but have no motion link" | **Assemble → Motion Link**: pick "Rotation Driver z15" and "Rotation Extra z18 (no link)", angles **360°** and **300°** (360 · 15/18), turn on Reverse |
+| **Driven z20** turns, but the same way as the large z30 — in a real mechanism the teeth would jam; Fusion just lets them pass through each other | the link "Gear ratio 30:20" is reversed — check: "the teeth … collide when turning" | edit the link "Gear ratio 30:20" and toggle Reverse |
+| The three **Triangle A/B/C z21** gears do not turn together | in a loop of three external meshes every gear would have to turn both ways at once — check: "the links make it turn in opposite directions" | a link cannot fix it: remove one of the gears, or move it so that it meshes with one neighbour only, and delete the extra link |
+
+After the first two fixes the check reports only the triangle, and the z18 → z15 → z30 → z20 chain turns as a whole. For comparison open the correct gear train: all its gears turn together.
+
+Why the "wrong" gears move in the animation at all: Fusion does not look at teeth touching, it only follows the motion links. A reversed link therefore looks like ordinary rotation, and a gear without a link stays put even when it sits right next to its neighbour. Mistakes of this kind show up only in the check.
+
 ## 8. Typical sets
 
 | Cylindrical | Bevel (shafts at 90°) |
