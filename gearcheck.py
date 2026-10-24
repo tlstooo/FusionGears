@@ -42,10 +42,9 @@ def find_conflicts(links):
     return conflicts
 
 
-def describe(conflict, label=str):
-    """Russian one-line description of a conflict."""
-    kind = 'в разные стороны' if conflict['opposite'] else 'с разной скоростью'
-    first = ' → '.join(conflict['chain']) or 'ведущее соединение'
-    second = ' → '.join(conflict['other_chain'])
-    return (f'{label(conflict["joint"])}: связи заставляют вращаться {kind} '
-            f'(через {first}: {conflict["speed"]:+.4g}; через {second}: {conflict["other_speed"]:+.4g})')
+def describe(conflict, label, t):
+    """One-line description of a conflict; t is strings.t (texts by key)."""
+    return t('chk_conflict', joint=label(conflict['joint']),
+             kind=t('chk_opposite' if conflict['opposite'] else 'chk_speed'),
+             first=' → '.join(conflict['chain']) or t('chk_driver'), s1=f"{conflict['speed']:+.4g}",
+             second=' → '.join(conflict['other_chain']), s2=f"{conflict['other_speed']:+.4g}")

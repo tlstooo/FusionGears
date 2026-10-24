@@ -14,7 +14,11 @@ FLANK_POINTS = 10
 
 
 class GearError(ValueError):
-    pass
+    """Invalid gear parameters. key names the message in strings.py, params fill it in."""
+
+    def __init__(self, key, **params):
+        super().__init__(key)
+        self.key, self.params = key, params
 
 
 def inv(a):
@@ -47,10 +51,10 @@ def _flank(rb, ra, r_low, psi, alpha, n=None):
 def _check_flank(flank, tooth_angle, what):
     radial, pts = flank
     if pts[-1][1] <= 0.02 * tooth_angle:
-        raise GearError(f'{what}: заострённый зуб — уменьшите угол или увеличьте число зубьев')
+        raise GearError('pointed_tooth', what=what)
     bottom = radial[1] if radial else pts[0][1]
     if tooth_angle - 2 * bottom <= 0.02 * tooth_angle:
-        raise GearError(f'{what}: зубья пересекаются у основания')
+        raise GearError('root_overlap', what=what)
 
 
 def _tooth_chain(flank, ra):
@@ -104,11 +108,11 @@ class CylindricalGear:
 
     def __init__(self, mn, z, beta, alpha_n, width, hand=1, backlash=0.0, bore=0.0):
         if mn <= 0 or width <= 0:
-            raise GearError('Модуль и ширина должны быть больше нуля')
+            raise GearError('zero_size')
         if z < 4:
-            raise GearError('Слишком мало зубьев (минимум 4)')
+            raise GearError('too_few_teeth')
         if not 0 <= beta < math.radians(60):
-            raise GearError('Угол наклона зуба должен быть от 0 до 60°')
+            raise GearError('helix_range')
         self.mn, self.z, self.beta, self.width, self.hand = mn, z, beta, width, hand
         self.mt = mn / math.cos(beta)
         self.alpha_t = math.atan(math.tan(alpha_n) / math.cos(beta))
@@ -117,13 +121,13 @@ class CylindricalGear:
         self.ra = self.r + HA * mn
         self.rf = self.r - HF * mn
         if self.rf <= 0:
-            raise GearError('Окружность впадин меньше нуля')
+            raise GearError('root_negative')
         if bore and bore / 2 >= self.rf * 0.9:
-            raise GearError('Отверстие слишком большое для этого колеса')
+            raise GearError('bore_too_big')
         self.bore = bore
         s = math.pi * self.mt / 2 - backlash / math.cos(beta) / 2
         self.flank = _flank(self.rb, self.ra, self.rf, s / (2 * self.r), self.alpha_t)
-        _check_flank(self.flank, 2 * math.pi / z, 'Колесо')
+        _check_flank(self.flank, 2 * math.pi / z, 'gear')
 
     def twist(self, length):
         """Rotation of the tooth over an axial length (signed by hand)."""
@@ -178,29 +182,35 @@ def placement(x, y, phi):
     return matmul(translation(x, y, 0), rot_z(phi))
 
 
+TOOTH_LINES = ('straight', 'skew', 'spiral', 'gleason')
+
+
 class BevelGear:
-    """Bevel gear with straight, skew (tangential) or spiral teeth.
+    """Bevel gear with straight, skew (tangential), spiral or Gleason circular-arc teeth.
 
     Built with the axis along Z, pitch circle (heel) in the plane z=0 and the
     pitch-cone apex on +Z. m — outer transverse module, beta — spiral angle at
-    the middle of the face, tooth_line — 'straight' | 'skew' | 'spiral'.
+    the middle of the face, tooth_line — one of TOOTH_LINES: 'spiral' is a
+    constant-angle (logarithmic) spiral, 'gleason' a circular arc of the cutter
+    head of radius cutter_radius on the crown gear (0 — equal to the mean cone
+    distance), so the spiral angle grows from toe to heel as on Gleason gears.
     Profiles use Tredgold's back-cone approximation.
     """
 
     def __init__(self, m, z, z_mate, sigma, alpha_n, face, tooth_line='straight', beta=0.0,
-                 hand=1, backlash=0.0, back=0.0, bore=0.0, sections=7):
+                 hand=1, backlash=0.0, back=0.0, bore=0.0, sections=7, cutter_radius=0.0):
         if m <= 0 or face <= 0:
-            raise GearError('Модуль и ширина венца должны быть больше нуля')
+            raise GearError('zero_size')
         if z < 4 or z_mate < 4:
-            raise GearError('Слишком мало зубьев (минимум 4)')
+            raise GearError('too_few_teeth')
         if not math.radians(10) <= sigma <= math.radians(170):
-            raise GearError('Межосевой угол должен быть от 10 до 170°')
-        if tooth_line not in ('straight', 'skew', 'spiral'):
-            raise GearError('Неизвестный тип линии зуба')
+            raise GearError('shaft_angle_range')
+        if tooth_line not in TOOTH_LINES:
+            raise GearError('unknown_line')
         if tooth_line == 'straight':
             beta = 0.0
         elif not math.radians(1) <= beta < math.radians(60):
-            raise GearError('Угол наклона зуба должен быть от 1 до 60°')
+            raise GearError('spiral_range')
         self.m, self.z, self.z_mate, self.sigma = m, z, z_mate, sigma
         self.alpha_n, self.face, self.tooth_line = alpha_n, face, tooth_line
         self.beta, self.hand, self.backlash, self.back = beta, hand, backlash, back
@@ -208,15 +218,24 @@ class BevelGear:
 
         self.delta = math.atan2(math.sin(sigma), z_mate / z + math.cos(sigma))
         if not 0 < self.delta < math.radians(89):
-            raise GearError('Угол делительного конуса ≥ 89° (плоское/внутреннее колесо не поддерживается)')
+            raise GearError('cone_too_flat')
         self.r = m * z / 2
         self.Re = self.r / math.sin(self.delta)
         self.Ri = self.Re - face
         self.Rm = self.Re - face / 2
         if self.Ri < 0.4 * self.Re:
-            raise GearError('Ширина венца больше 0.6 конусного расстояния')
+            raise GearError('face_too_wide')
         if tooth_line == 'skew' and self.Rm * math.sin(beta) >= self.Ri * 0.99:
-            raise GearError('Для косого зуба угол слишком велик при такой ширине венца')
+            raise GearError('skew_too_steep')
+        self.cutter_radius = cutter_radius
+        if tooth_line == 'gleason':
+            self.rc = cutter_radius or self.Rm
+            # cutter centre in the crown plane; the arc passes through (Rm, 0) at angle beta
+            cx, cy = self.Rm - self.rc * math.sin(beta), self.rc * math.cos(beta)
+            self._centre = (math.hypot(cx, cy), math.atan2(cy, cx))
+            for R in (self.Ri, self.Re):
+                if abs(self._arc_cos(R)) > 0.999:
+                    raise GearError('cutter_too_small', rc=self.rc * 10, rm=self.Rm * 10)
         self.alpha_t = math.atan(math.tan(alpha_n) / math.cos(beta))
         cd, sd = math.cos(self.delta), math.sin(self.delta)
         self.apex_z = self.Re * cd
@@ -230,10 +249,10 @@ class BevelGear:
         rbv = self.rv * math.cos(self.alpha_t)
         s = math.pi * m / 2 - backlash / 2
         self.flank = _flank(rbv, self.ra_v, self.r_low, s / (2 * self.rv), self.alpha_t)
-        _check_flank(self.flank, 2 * math.pi / self.zv, 'Коническое колесо')
+        _check_flank(self.flank, 2 * math.pi / self.zv, 'bevel')
         self.bore = bore
         if bore and bore / 2 >= self.blank_profile()[1][0] * 0.9:
-            raise GearError('Отверстие слишком большое для этого колеса')
+            raise GearError('bore_too_big')
 
     # --- tooth line -------------------------------------------------------
     def phi(self, R):
@@ -243,9 +262,27 @@ class BevelGear:
         if self.tooth_line == 'skew':
             e = self.Rm * math.sin(self.beta)
             crown = math.acos(e / R) - math.acos(e / self.Rm)
+        elif self.tooth_line == 'gleason':
+            crown = self._centre[1] - math.acos(self._arc_cos(R))
         else:
             crown = math.tan(self.beta) * math.log(R / self.Rm)
         return self.hand * crown / math.sin(self.delta)
+
+    def _arc_cos(self, R):
+        """cos of the angle at the apex between the cutter centre and the arc point at R."""
+        d = self._centre[0]
+        return (R * R + d * d - self.rc * self.rc) / (2 * R * d)
+
+    def spiral_angle(self, R):
+        """Spiral angle of the tooth line at cone distance R."""
+        if self.tooth_line == 'straight':
+            return 0.0
+        if self.tooth_line == 'skew':
+            return math.asin(self.Rm * math.sin(self.beta) / R)
+        if self.tooth_line == 'gleason':
+            d = self._centre[0]
+            return math.asin((R * R + self.rc * self.rc - d * d) / (2 * R * self.rc))
+        return self.beta
 
     def section_distances(self):
         n = self.sections
@@ -290,7 +327,7 @@ class BevelGear:
     def mate(self, bore=None):
         return BevelGear(self.m, self.z_mate, self.z, self.sigma, self.alpha_n, self.face,
                          self.tooth_line, self.beta, -self.hand, self.backlash, self.back,
-                         self.bore if bore is None else bore, self.sections)
+                         self.bore if bore is None else bore, self.sections, self.cutter_radius)
 
     def mate_transform(self, other):
         """Placement of the mating gear (built in its own frame) so the apexes coincide."""
@@ -301,4 +338,6 @@ class BevelGear:
     def info(self):
         return {'delta': self.delta, 'd': 2 * self.r,
                 'da': 2 * (self.r + self.ha * math.cos(self.delta)),
-                'Re': self.Re, 'zv': self.zv, 'face_max': self.Re / 3}
+                'Re': self.Re, 'zv': self.zv, 'face_max': self.Re / 3,
+                'beta_toe': self.spiral_angle(self.Ri), 'beta_heel': self.spiral_angle(self.Re),
+                'rc': getattr(self, 'rc', 0.0)}

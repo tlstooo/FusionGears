@@ -84,7 +84,7 @@ def run(context):
                  lambda c, g, n, k=kind: fg.build_cylindrical(c, g, k, n),
                  [(g1, f'cyl{kind}_a'), (g2, f'cyl{kind}_b')], g1.mate_transform(g2), x)
             x += 12
-        for line, beta in (('straight', 0.0), ('skew', D(25)), ('spiral', D(35))):
+        for line, beta in (('straight', 0.0), ('skew', D(25)), ('spiral', D(35)), ('gleason', D(35))):
             g1 = gearmath.BevelGear(m, 18, 27, D(90), D(20), 0.9, line, beta, 1, 0.005, 0.5, 0.6, 7)
             g2 = g1.mate(0.8)
             case(f'bevel {line}', fg.build_bevel,

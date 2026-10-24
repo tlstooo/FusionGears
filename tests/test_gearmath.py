@@ -7,6 +7,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'
 import gearmath as gm  # noqa: E402
 import presets  # noqa: E402
 import gearcheck  # noqa: E402
+import strings  # noqa: E402
 
 gm.FLANK_POINTS = 40
 D = math.radians
@@ -117,7 +118,7 @@ def unit(v):
 
 
 def test_bevel():
-    for line, beta in (('straight', 0.0), ('skew', D(25)), ('spiral', D(35))):
+    for line, beta in (('straight', 0.0), ('skew', D(25)), ('spiral', D(35)), ('gleason', D(30))):
         g1 = gm.BevelGear(0.2, 18, 27, D(90), D(20), 0.9, line, beta, backlash=0.005, back=0.5, bore=0.6)
         g2 = g1.mate()
         assert abs(g1.delta + g2.delta - D(90)) < 1e-12
@@ -186,17 +187,16 @@ def test_errors():
 CYL_IDS = {'kind', 'module', 'teeth', 'beta', 'hand', 'alpha', 'width', 'bore', 'backlash',
            'pair', 'teeth2', 'bore2', 'drive'}
 BEVEL_IDS = {'line', 'module', 'teeth', 'teeth2', 'sigma', 'beta', 'hand', 'alpha', 'width', 'back',
-             'bore', 'backlash', 'sections', 'pair', 'bore2', 'drive'}
-KINDS = {'Шевронный': 0, 'Косозубый': 1, 'Прямозубый': 2}
-LINES = {'Прямой': 'straight', 'Косой (тангенциальный)': 'skew', 'Спиральный (круговой)': 'spiral'}
+             'bore', 'backlash', 'sections', 'pair', 'bore2', 'drive', 'cutter'}
 
 
 def test_presets():
     """Every preset gives valid gears whose pair meshes (as in the dialog, mm -> cm)."""
     cm = lambda v: v / 10
-    for name, p in presets.CYLINDRICAL:
+    for (name, name_en), p in presets.CYLINDRICAL:
+        assert name and name_en and p['kind'] in ('herringbone', 'helical', 'spur')
         assert set(p) <= CYL_IDS, set(p) - CYL_IDS
-        beta = 0.0 if KINDS[p['kind']] == 2 else D(p['beta'])
+        beta = 0.0 if p['kind'] == 'spur' else D(p['beta'])
         args = dict(mn=cm(p['module']), beta=beta, alpha_n=D(p['alpha']), width=cm(p['width']),
                     backlash=cm(p['backlash']))
         g1 = gm.CylindricalGear(z=p['teeth'], bore=cm(p['bore']), **args)
@@ -210,11 +210,12 @@ def test_presets():
             mesh_check([rot2(q, t) for q in p1], [rot2(q, -t * g1.z / g2.z, (a, 0)) for q in p2],
                        name, (g1.r, 0), 4 * g1.mn)
         print(f'  preset ok: {name}  a={a * 10:.2f} mm')
-    for name, p in presets.BEVEL:
+    for (name, name_en), p in presets.BEVEL:
+        assert name and name_en and p['line'] in gm.TOOTH_LINES
         assert set(p) <= BEVEL_IDS, set(p) - BEVEL_IDS
         g1 = gm.BevelGear(cm(p['module']), p['teeth'], p['teeth2'], D(p['sigma']), D(p['alpha']),
-                          cm(p['width']), LINES[p['line']], D(p.get('beta', 30)), 1, cm(p['backlash']),
-                          cm(p['back']), cm(p['bore']), p.get('sections', 7))
+                          cm(p['width']), p['line'], D(p.get('beta', 30)), 1, cm(p['backlash']),
+                          cm(p['back']), cm(p['bore']), p.get('sections', 7), cm(p.get('cutter', 0)))
         g2 = g1.mate(cm(p['bore2']))
         assert p['width'] <= g1.Re * 10 / 3 + 1e-9, f'{name}: face wider than Re/3'
         print(f'  preset ok: {name}  Re={g1.Re * 10:.2f} mm, b<=Re/3')
@@ -233,7 +234,10 @@ def test_gearcheck():
     two = fc([('A', 'B', -1, '1'), ('B', 'C', -1, '2'), ('C', 'A', -1, '3'),       # two separate faults
               ('D', 'E', -1, '4'), ('D', 'E', 1, '5')])
     assert len(two) == 2
-    assert 'в разные стороны' in gearcheck.describe(tri[0])
+    strings.set_language('ru')
+    assert 'в разные стороны' in gearcheck.describe(tri[0], str, strings.t)
+    strings.set_language('en')
+    assert 'in opposite directions' in gearcheck.describe(tri[0], str, strings.t)
     print('gearcheck: ok')
 
 
@@ -254,7 +258,26 @@ def test_mesh_phase():
     print('mesh_phase: ok')
 
 
+def test_strings():
+    """Every text has both languages with the same placeholders; every gearmath error has a text."""
+    import re
+    for key, (ru, en) in strings.TEXT.items():
+        assert ru and en, key
+        assert set(re.findall(r'{(\w+)', ru)) == set(re.findall(r'{(\w+)', en)), key
+    src = open(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'gearmath.py'), encoding='utf-8').read()
+    for key in set(re.findall(r"GearError\('([a-z_]+)'", src)):
+        assert 'err_' + key in strings.TEXT, key
+    for lang in ('ru', 'en'):
+        strings.set_language(lang)
+        try:
+            gm.CylindricalGear(0.2, 6, D(55), D(25), 1.0)
+        except gm.GearError as e:
+            assert strings.error(e) and 'err_' not in strings.error(e)
+    print('strings: ok')
+
+
 if __name__ == '__main__':
+    test_strings()
     test_mesh_phase()
     test_gearcheck()
     test_presets()

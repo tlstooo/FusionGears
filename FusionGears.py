@@ -1,4 +1,4 @@
-"""FusionGears — herringbone/helical and bevel (straight, skew, spiral) gear generator."""
+"""FusionGears — herringbone/helical and bevel (straight, skew, spiral, Gleason) gear generator."""
 import adsk.core
 import adsk.fusion
 import importlib
@@ -13,10 +13,13 @@ if _HERE not in sys.path:
 import gearmath  # noqa: E402
 import presets  # noqa: E402
 import gearcheck  # noqa: E402
+import strings  # noqa: E402
+importlib.reload(strings)
 importlib.reload(gearmath)
 importlib.reload(presets)
 importlib.reload(gearcheck)
 from gearmath import GearError  # noqa: E402
+from strings import t  # noqa: E402
 
 PANEL_ID = 'SolidCreatePanel'
 INSPECT_PANEL_ID = 'InspectPanel'
@@ -27,10 +30,6 @@ CHECK_ID = 'FusionGears_Check'
 _app = None
 _ui = None
 _handlers = []
-
-CYL_TYPES = ['Шевронный', 'Косозубый', 'Прямозубый']
-LINE_TYPES = {'Прямой': 'straight', 'Косой (тангенциальный)': 'skew', 'Спиральный (круговой)': 'spiral'}
-HANDS = ['Правый', 'Левый']
 
 
 # --------------------------------------------------------------------------- geometry helpers
@@ -82,7 +81,7 @@ def _largest_profile(sketch):
         if a > area:
             best, area = prof, a
     if best is None:
-        raise GearError('Не удалось построить замкнутый профиль')
+        raise GearError('no_profile')
     return best
 
 
@@ -125,7 +124,7 @@ def _cut_bore(comp, body, diameter, length):
     if diameter <= 0:
         return
     sk = comp.sketches.add(comp.xYConstructionPlane)
-    sk.name = 'Отверстие'
+    sk.name = t('sk_bore')
     sk.sketchCurves.sketchCircles.addByCenterRadius(adsk.core.Point3D.create(0, 0, 0), diameter / 2)
     ext = comp.features.extrudeFeatures
     inp = ext.createInput(sk.profiles.item(0), adsk.fusion.FeatureOperations.CutFeatureOperation)
@@ -158,16 +157,16 @@ def _axis_circle(comp, m, name, radius=0.3):
     and a flipped axis silently reverses the motion link.
     """
     helper = comp.sketches.add(comp.xYConstructionPlane)
-    helper.name = name + ' — точки оси'
+    helper.name = t('sk_axis_points', name=name)
     pts = [gearmath.apply(m, q) for q in ((0, 0, 0), (radius, 0, 0), (0, radius, 0))]
     sp = [helper.sketchPoints.add(_p(q)) for q in pts]
     pin = comp.constructionPlanes.createInput()
     pin.setByThreePoints(sp[0], sp[1], sp[2])
     plane = comp.constructionPlanes.add(pin)
-    plane.name = name + ' — плоскость оси'
+    plane.name = t('pl_axis', name=name)
     plane.isLightBulbOn = False
     sk = comp.sketches.add(plane)
-    sk.name = name + ' — ось вращения'
+    sk.name = t('sk_axis', name=name)
     centre = _model_to_sketch(sk)(pts[0])
     circle = sk.sketchCurves.sketchCircles.addByCenterRadius(centre, radius)
     helper.isVisible = False
@@ -175,10 +174,10 @@ def _axis_circle(comp, m, name, radius=0.3):
     return circle
 
 
-def add_frame(design, name='Стойка передачи'):
+def add_frame(design, name=None):
     """Grounded empty component the gear joints hang on."""
     frame = design.rootComponent.occurrences.addNewComponent(adsk.core.Matrix3D.create())
-    frame.component.name = name
+    frame.component.name = name or t('name_frame')
     frame.isGrounded = True
     return frame
 
@@ -194,7 +193,7 @@ def add_joint(design, frame, occ, m=None):
     inp = root.asBuiltJoints.createInput(occ, frame, geo)
     inp.setAsRevoluteJointMotion(adsk.fusion.JointDirections.ZAxisJointDirection)
     joint = root.asBuiltJoints.add(inp)
-    joint.name = f'Вращение {occ.component.name}'
+    joint.name = t('name_joint', name=occ.component.name)
     return joint
 
 
@@ -210,7 +209,7 @@ def add_link(design, joints, z1, z2, pairs):
     inp.valueTwo = adsk.core.ValueInput.createByString(f'{360 * z1 / z2:.6f} deg')
     inp.isReversed = True
     link = root.motionLinks.add(inp)
-    link.name = f'Передача {z1}:{z2}'
+    link.name = t('name_link', z1=z1, z2=z2)
 
     motion = joints[0].jointMotion
     start = motion.rotationValue
@@ -300,13 +299,13 @@ def check_system(design):
     for j, _ in rotors:
         for link in j.motionLinks:
             links.setdefault(link.entityToken, [link, []])[1].append(j.entityToken)
-    links = {t: (l, js) for t, (l, js) in links.items() if len(set(js)) == 2}
+    links = {tok: (l, js) for tok, (l, js) in links.items() if len(set(js)) == 2}
 
     problems = []
     healthy = adsk.fusion.FeatureHealthStates.HealthyFeatureHealthState
     for link, _ in links.values():
         if link.healthState != healthy:
-            problems.append(f'Связь {link.name}: {link.errorOrWarningMessage or "ошибка в Fusion"}')
+            problems.append(t('chk_link_unhealthy', link=link.name, msg=link.errorOrWarningMessage or t('chk_fusion_error')))
 
     tol = 1e-3 * min((b.physicalProperties.volume for _, o in rotors for b in _bodies(o)), default=1.0)
     start = {}
@@ -315,13 +314,13 @@ def check_system(design):
             start[j.entityToken] = j.jointMotion.rotationValue
         except Exception:
             pass
-    suppressed = {t: l.isSuppressed for t, (l, _) in links.items()}
+    suppressed = {tok: l.isSuppressed for tok, (l, _) in links.items()}
     edges, linked = [], set()
     try:
         for l, _ in links.values():
             l.isSuppressed = True
-        for t, (link, (ta, tb)) in links.items():
-            if suppressed[t]:
+        for tok, (link, (ta, tb)) in links.items():
+            if suppressed[tok]:
                 continue
             (ja, oa), (jb, ob) = by_token[ta], by_token[tb]
             link.isSuppressed = False
@@ -339,29 +338,28 @@ def check_system(design):
                 link.isSuppressed = True
             linked.add(frozenset((oa.entityToken, ob.entityToken)))
             if abs(k) < 1e-9:
-                problems.append(f'Связь {link.name} не передаёт вращение')
+                problems.append(t('chk_no_rotation', link=link.name))
                 continue
             if bad_turn:
-                problems.append(f'Связь {link.name}: при вращении зубья {oa.name} и {ob.name} врезаются — '
-                                'неверное направление или передаточное отношение')
+                problems.append(t('chk_clash', link=link.name, a=oa.name, b=ob.name))
             edges.append((ta, tb, k, link.name))
     finally:
-        for t, (l, _) in links.items():
-            l.isSuppressed = suppressed[t]
+        for tok, (l, _) in links.items():
+            l.isSuppressed = suppressed[tok]
         for j, _ in rotors:
             try:
                 j.jointMotion.rotationValue = start[j.entityToken]
             except Exception:
                 pass
 
-    problems += [gearcheck.describe(c, label) for c in gearcheck.find_conflicts(edges)]
+    problems += [gearcheck.describe(c, label, t) for c in gearcheck.find_conflicts(edges)]
 
     occs = list({occ.entityToken: occ for _, occ in rotors}.values())
     pairs = [(oa, ob) for i, oa in enumerate(occs) for ob in occs[i + 1:]]
     clashing = set()
     for oa, ob in pairs:
         if _occ_overlap(oa, ob, tol):
-            problems.append(f'{oa.name} и {ob.name} пересекаются в текущем положении')
+            problems.append(t('chk_overlap', a=oa.name, b=ob.name))
             clashing |= {oa.entityToken, ob.entityToken}
     for oa, ob in pairs:
         # a gear that already clashes would only add noise here
@@ -369,19 +367,19 @@ def check_system(design):
                 or frozenset((oa.entityToken, ob.entityToken)) in linked):
             continue
         if _occ_gap(oa, ob) < MESH_GAP:
-            problems.append(f'{oa.name} и {ob.name} в зацеплении, но не связаны связью движения')
+            problems.append(t('chk_mesh_no_link', a=oa.name, b=ob.name))
 
-    summary = f'Колёс на шарнирах: {len(occs)}, связей движения: {len(links)}.'
+    summary = t('chk_summary', gears=len(occs), links=len(links))
     return problems, summary
 
 
 def _report_check(design, only_problems=False):
     problems, summary = check_system(design)
     if problems:
-        _ui.messageBox('Проверка зубчатой передачи: найдены проблемы\n\n' +
+        _ui.messageBox(t('chk_found') + '\n\n' +
                        '\n'.join('• ' + p for p in problems) + '\n\n' + summary)
     elif not only_problems:
-        _ui.messageBox('Проверка зубчатой передачи: проблем не найдено.\n\n' + summary)
+        _ui.messageBox(t('chk_none') + '\n\n' + summary)
     return problems
 
 
@@ -408,7 +406,7 @@ def build_cylindrical(comp, gear, kind, name):
     """kind: 0 herringbone, 1 helical, 2 spur. Returns the gear body."""
     feats = comp.features
     sk = comp.sketches.add(comp.xYConstructionPlane)
-    sk.name = name + ' — профиль'
+    sk.name = t('sk_profile', name=name)
     sk.isComputeDeferred = True
     _draw_closed(sk, gear.outline(), _p)
     sk.isComputeDeferred = False
@@ -422,7 +420,7 @@ def build_cylindrical(comp, gear, kind, name):
     else:
         length = gear.width / 2 if kind == 0 else gear.width
         path_sk = comp.sketches.add(comp.xYConstructionPlane)
-        path_sk.name = name + ' — ось'
+        path_sk.name = t('sk_path', name=name)
         line = path_sk.sketchCurves.sketchLines.addByTwoPoints(
             adsk.core.Point3D.create(0, 0, 0), adsk.core.Point3D.create(0, 0, length))
         inp = feats.sweepFeatures.createInput(prof, feats.createPath(line, False), new_body)
@@ -432,7 +430,7 @@ def build_cylindrical(comp, gear, kind, name):
             pin = comp.constructionPlanes.createInput()
             pin.setByOffset(comp.xYConstructionPlane, adsk.core.ValueInput.createByReal(length))
             plane = comp.constructionPlanes.add(pin)
-            plane.name = name + ' — середина'
+            plane.name = t('pl_middle', name=name)
             plane.isLightBulbOn = False
             mir = feats.mirrorFeatures.add(feats.mirrorFeatures.createInput(_collection([body]), plane))
             _combine(body, [mir.bodies.item(0)])
@@ -448,7 +446,7 @@ def build_bevel(comp, gear, name):
 
     # blank: revolve the root-cone half section around Z
     bsk = comp.sketches.add(comp.xZConstructionPlane)
-    bsk.name = name + ' — заготовка'
+    bsk.name = t('sk_blank', name=name)
     pts = [(x, 0.0, zz) for x, zz in gear.blank_profile()]
     _draw_closed(bsk, [('line', [pts[i], pts[(i + 1) % len(pts)]]) for i in range(len(pts))],
                  _model_to_sketch(bsk))
@@ -460,7 +458,7 @@ def build_bevel(comp, gear, name):
 
     # one tooth: loft through sections on planes normal to the pitch-cone generator
     helper = comp.sketches.add(comp.xYConstructionPlane)
-    helper.name = name + ' — точки сечений'
+    helper.name = t('sk_section_points', name=name)
     loft_in = feats.loftFeatures.createInput(adsk.fusion.FeatureOperations.NewBodyFeatureOperation)
     for i, R in enumerate(gear.section_distances()):
         sp = [helper.sketchPoints.add(_p(q)) for q in gear.section_plane(R)]
@@ -469,7 +467,7 @@ def build_bevel(comp, gear, name):
         plane = planes.add(pin)
         plane.isLightBulbOn = False
         sk = comp.sketches.add(plane)
-        sk.name = f'{name} — сечение {i + 1}'
+        sk.name = t('sk_section', name=name, i=i + 1)
         sk.isComputeDeferred = True
         _draw_closed(sk, gear.section(R), _model_to_sketch(sk))
         sk.isComputeDeferred = False
@@ -495,7 +493,7 @@ def _run_build(builder, gears, transform, drive=False):
     """
     design = adsk.fusion.Design.cast(_app.activeProduct)
     if not design:
-        raise GearError('Откройте проект в рабочем пространстве Design')
+        raise GearError('open_design')
     built = []
     for idx, (gear, name) in enumerate(gears):
         start = _timeline_count(design)
@@ -507,7 +505,7 @@ def _run_build(builder, gears, transform, drive=False):
         built.append((occ, body))
     if drive and len(built) == 2:
         if any(occ is None for occ, _ in built):
-            _ui.messageBox('Колёса построены, но соединения не созданы: в дизайне типа Part нет компонентов.')
+            _ui.messageBox(t('msg_part_no_joints'))
             return
         add_drive(design, built, gears[0][0].z, gears[1][0].z, [None, transform])
         _report_check(design, only_problems=True)
@@ -515,34 +513,55 @@ def _run_build(builder, gears, transform, drive=False):
 
 # --------------------------------------------------------------------------- command inputs
 
+CYL_KINDS = ['herringbone', 'helical', 'spur']   # index = kind passed to build_cylindrical
+HANDS = ['right', 'left']
+DROPDOWNS = {'kind': (CYL_KINDS, 'kind_'), 'line': (list(gearmath.TOOTH_LINES), 'line_'),
+             'hand': (HANDS, 'hand_')}
+
+
 def _value(inputs, iid):
     return inputs.itemById(iid).value
 
 
-def _hand(inputs, iid='hand'):
-    return 1 if inputs.itemById(iid).selectedItem.name == HANDS[0] else -1
+def _choice(inputs, iid):
+    """Key of the selected item of a dropdown from DROPDOWNS."""
+    return DROPDOWNS[iid][0][inputs.itemById(iid).selectedItem.index]
 
 
-def _add_common(inputs, module_label):
-    inputs.addValueInput('module', module_label, 'mm', adsk.core.ValueInput.createByString('2 mm'))
-    inputs.addIntegerSpinnerCommandInput('teeth', 'Число зубьев', 4, 500, 1, 20)
+def _hand(inputs):
+    return 1 if _choice(inputs, 'hand') == 'right' else -1
+
+
+def _add_dropdown(inputs, iid, label, items):
+    dd = inputs.addDropDownCommandInput(iid, label, adsk.core.DropDownStyles.TextListDropDownStyle)
+    for i, text in enumerate(items):
+        dd.listItems.add(text, i == 0)
+    return dd
+
+
+def _add_choice(inputs, iid, label_key):
+    keys, prefix = DROPDOWNS[iid]
+    _add_dropdown(inputs, iid, t(label_key), [t(prefix + k) for k in keys])
+
+
+def _add_common(inputs, module_key):
+    inputs.addValueInput('module', t(module_key), 'mm', adsk.core.ValueInput.createByString('2 mm'))
+    inputs.addIntegerSpinnerCommandInput('teeth', t('lbl_teeth'), 4, 500, 1, 20)
 
 
 def _add_presets(inputs, items):
-    _add_dropdown(inputs, 'preset', 'Типовой вариант', [presets.CUSTOM] + [name for name, _ in items])
+    _add_dropdown(inputs, 'preset', t('lbl_preset'),
+                  [t('preset_custom')] + [strings.pick(names) for names, _ in items])
 
 
 def apply_preset(inputs, values):
-    """Fill dialog inputs from a preset (lengths in mm, angles in degrees)."""
+    """Fill dialog inputs from a preset (lengths in mm, angles in degrees, dropdowns by key)."""
     for key, val in values.items():
         item = inputs.itemById(key)
         if item is None:
             continue
-        dd = adsk.core.DropDownCommandInput.cast(item)
-        if dd:
-            for li in dd.listItems:
-                if li.name == val:
-                    li.isSelected = True
+        if key in DROPDOWNS:
+            adsk.core.DropDownCommandInput.cast(item).listItems.item(DROPDOWNS[key][0].index(val)).isSelected = True
         elif key in presets.LENGTH_KEYS:
             item.expression = f'{val} mm'
         elif key in presets.ANGLE_KEYS:
@@ -551,15 +570,8 @@ def apply_preset(inputs, values):
             item.value = val
 
 
-def _add_dropdown(inputs, iid, label, names):
-    dd = inputs.addDropDownCommandInput(iid, label, adsk.core.DropDownStyles.TextListDropDownStyle)
-    for i, n in enumerate(names):
-        dd.listItems.add(n, i == 0)
-    return dd
-
-
 def _mm(v):
-    return f'{v * 10:.3f} мм'
+    return f'{v * 10:.3f} {t("unit_mm")}'
 
 
 def _deg(a):
@@ -567,8 +579,8 @@ def _deg(a):
 
 
 def cyl_from_inputs(inputs):
-    kind = CYL_TYPES.index(inputs.itemById('kind').selectedItem.name)
-    beta = 0.0 if kind == 2 else _value(inputs, 'beta')
+    kind = CYL_KINDS.index(_choice(inputs, 'kind'))
+    beta = 0.0 if CYL_KINDS[kind] == 'spur' else _value(inputs, 'beta')
     args = dict(mn=_value(inputs, 'module'), beta=beta, alpha_n=_value(inputs, 'alpha'),
                 width=_value(inputs, 'width'), backlash=_value(inputs, 'backlash'),
                 bore=_value(inputs, 'bore'))
@@ -582,14 +594,13 @@ def cyl_from_inputs(inputs):
 
 
 def bevel_from_inputs(inputs):
-    line = LINE_TYPES[inputs.itemById('line').selectedItem.name]
     g1 = gearmath.BevelGear(
         m=_value(inputs, 'module'), z=inputs.itemById('teeth').value,
         z_mate=inputs.itemById('teeth2').value, sigma=_value(inputs, 'sigma'),
-        alpha_n=_value(inputs, 'alpha'), face=_value(inputs, 'width'), tooth_line=line,
+        alpha_n=_value(inputs, 'alpha'), face=_value(inputs, 'width'), tooth_line=_choice(inputs, 'line'),
         beta=_value(inputs, 'beta'), hand=_hand(inputs), backlash=_value(inputs, 'backlash'),
         back=_value(inputs, 'back'), bore=_value(inputs, 'bore'),
-        sections=inputs.itemById('sections').value)
+        sections=inputs.itemById('sections').value, cutter_radius=_value(inputs, 'cutter'))
     g2 = None
     if inputs.itemById('pair').value:
         g2 = g1.mate(_value(inputs, 'bore2'))
@@ -598,27 +609,27 @@ def bevel_from_inputs(inputs):
 
 def cyl_info(kind, g1, g2):
     i = g1.info()
-    lines = [f'Делительный диаметр d = {_mm(i["d"])}', f'Диаметр вершин da = {_mm(i["da"])}',
-             f'Диаметр впадин df = {_mm(i["df"])}']
-    if kind != 2:
-        lines.append(f'Торцовый модуль mt = {_mm(i["mt"])}')
+    lines = [t('info_d', v=_mm(i['d'])), t('info_da', v=_mm(i['da'])), t('info_df', v=_mm(i['df']))]
+    if CYL_KINDS[kind] != 'spur':
+        lines.append(t('info_mt', v=_mm(i['mt'])))
     if g2:
-        lines.append(f'Колесо 2: d = {_mm(2 * g2.r)}, da = {_mm(2 * g2.ra)}')
-        lines.append(f'Межосевое расстояние a = {_mm(g1.center_distance(g2))}')
+        lines.append(t('info_gear2_cyl', d=_mm(2 * g2.r), da=_mm(2 * g2.ra)))
+        lines.append(t('info_a', v=_mm(g1.center_distance(g2))))
     return '<br>'.join(lines)
 
 
 def bevel_info(g1, g2):
     i = g1.info()
-    lines = [f'Угол делительного конуса δ = {_deg(i["delta"])}',
-             f'Внешний делительный диаметр de = {_mm(i["d"])}',
-             f'Диаметр вершин dae = {_mm(i["da"])}',
-             f'Внешнее конусное расстояние Re = {_mm(i["Re"])}',
-             f'Эквивалентное число зубьев zv = {i["zv"]:.1f}']
+    lines = [t('info_delta', v=_deg(i['delta'])), t('info_de', v=_mm(i['d'])), t('info_dae', v=_mm(i['da'])),
+             t('info_Re', v=_mm(i['Re'])), t('info_zv', v=f'{i["zv"]:.1f}')]
+    if g1.tooth_line != 'straight':
+        lines.append(t('info_beta_range', toe=_deg(i['beta_toe']), mid=_deg(g1.beta), heel=_deg(i['beta_heel'])))
+    if g1.tooth_line == 'gleason':
+        lines.append(t('info_rc', v=_mm(i['rc'])))
     if g1.face > i['face_max'] + 1e-9:
-        lines.append(f'<b>Ширина венца больше рекомендуемой Re/3 = {_mm(i["face_max"])}</b>')
+        lines.append('<b>' + t('info_face_warn', v=_mm(i['face_max'])) + '</b>')
     if g2:
-        lines.append(f'Колесо 2: δ = {_deg(g2.delta)}, de = {_mm(2 * g2.r)}')
+        lines.append(t('info_gear2_bevel', delta=_deg(g2.delta), de=_mm(2 * g2.r)))
     return '<br>'.join(lines)
 
 
@@ -646,14 +657,14 @@ class _Created(adsk.core.CommandCreatedEventHandler):
                 _handlers.append(h)
             self.refresh(cmd.commandInputs)
         except Exception:
-            _ui.messageBox('Ошибка:\n' + traceback.format_exc())
+            _ui.messageBox(t('msg_error') + '\n' + traceback.format_exc())
 
     def refresh(self, inputs):
         try:
             _set_info(inputs, self.info(*self.read(inputs)))
             return True
         except GearError as e:
-            _set_info(inputs, f'<b>{e}</b>')
+            _set_info(inputs, f'<b>{strings.error(e)}</b>')
             return False
 
 
@@ -666,9 +677,9 @@ class _Changed(adsk.core.InputChangedEventHandler):
         try:
             inputs = args.inputs.command.commandInputs
             if args.input.id == 'preset':
-                chosen = dict(self.owner.presets).get(args.input.selectedItem.name)
-                if chosen:
-                    apply_preset(inputs, chosen)
+                index = args.input.selectedItem.index
+                if index > 0:   # item 0 keeps the current values
+                    apply_preset(inputs, self.owner.presets[index - 1][1])
             _visibility(inputs)
             self.owner.refresh(inputs)
         except Exception:
@@ -696,81 +707,82 @@ class _Execute(adsk.core.CommandEventHandler):
         try:
             self.owner.build(args.command.commandInputs)
         except GearError as e:
-            _ui.messageBox(str(e))
+            _ui.messageBox(strings.error(e))
         except Exception:
-            _ui.messageBox('Не удалось построить шестерню:\n' + traceback.format_exc())
+            _ui.messageBox(t('msg_build_failed') + '\n' + traceback.format_exc())
 
 
 def _visibility(inputs):
     pair = inputs.itemById('pair').value
     inputs.itemById('bore2').isVisible = pair
     inputs.itemById('drive').isVisible = pair
-    kind = inputs.itemById('kind')
-    if kind:
+    if inputs.itemById('kind'):
         inputs.itemById('teeth2').isVisible = pair
-        straight = kind.selectedItem.name == CYL_TYPES[2]
+        straight = _choice(inputs, 'kind') == 'spur'
     else:
-        straight = inputs.itemById('line').selectedItem.name == 'Прямой'
+        line = _choice(inputs, 'line')
+        straight = line == 'straight'
         inputs.itemById('sections').isVisible = not straight
+        inputs.itemById('cutter').isVisible = line == 'gleason'
     inputs.itemById('beta').isVisible = not straight
     inputs.itemById('hand').isVisible = not straight
 
 
 def cyl_setup(inputs):
     _add_presets(inputs, presets.CYLINDRICAL)
-    _add_dropdown(inputs, 'kind', 'Тип зуба', CYL_TYPES)
-    _add_common(inputs, 'Нормальный модуль')
-    inputs.addValueInput('beta', 'Угол наклона зуба', 'deg', adsk.core.ValueInput.createByString('30 deg'))
-    _add_dropdown(inputs, 'hand', 'Направление', HANDS)
-    inputs.addValueInput('alpha', 'Угол профиля', 'deg', adsk.core.ValueInput.createByString('20 deg'))
-    inputs.addValueInput('width', 'Ширина венца', 'mm', adsk.core.ValueInput.createByString('20 mm'))
-    inputs.addValueInput('bore', 'Диаметр отверстия', 'mm', adsk.core.ValueInput.createByString('6 mm'))
-    inputs.addValueInput('backlash', 'Боковой зазор', 'mm', adsk.core.ValueInput.createByString('0.05 mm'))
-    inputs.addBoolValueInput('pair', 'Создать сопряжённое колесо', True, '', False)
-    inputs.addIntegerSpinnerCommandInput('teeth2', 'Зубьев у колеса 2', 4, 500, 1, 40)
-    inputs.addValueInput('bore2', 'Отверстие колеса 2', 'mm', adsk.core.ValueInput.createByString('8 mm'))
-    inputs.addBoolValueInput('drive', 'Шарниры и связь движения', True, '', True)
-    inputs.addTextBoxCommandInput('info', 'Расчёт', '', 7, True)
+    _add_choice(inputs, 'kind', 'lbl_kind')
+    _add_common(inputs, 'lbl_module_normal')
+    inputs.addValueInput('beta', t('lbl_beta'), 'deg', adsk.core.ValueInput.createByString('30 deg'))
+    _add_choice(inputs, 'hand', 'lbl_hand')
+    inputs.addValueInput('alpha', t('lbl_alpha'), 'deg', adsk.core.ValueInput.createByString('20 deg'))
+    inputs.addValueInput('width', t('lbl_width'), 'mm', adsk.core.ValueInput.createByString('20 mm'))
+    inputs.addValueInput('bore', t('lbl_bore'), 'mm', adsk.core.ValueInput.createByString('6 mm'))
+    inputs.addValueInput('backlash', t('lbl_backlash'), 'mm', adsk.core.ValueInput.createByString('0.05 mm'))
+    inputs.addBoolValueInput('pair', t('lbl_pair_cyl'), True, '', False)
+    inputs.addIntegerSpinnerCommandInput('teeth2', t('lbl_teeth2_cyl'), 4, 500, 1, 40)
+    inputs.addValueInput('bore2', t('lbl_bore2_cyl'), 'mm', adsk.core.ValueInput.createByString('8 mm'))
+    inputs.addBoolValueInput('drive', t('lbl_drive'), True, '', True)
+    inputs.addTextBoxCommandInput('info', t('lbl_info'), '', 7, True)
     _visibility(inputs)
 
 
 def bevel_setup(inputs):
     _add_presets(inputs, presets.BEVEL)
-    _add_dropdown(inputs, 'line', 'Линия зуба', list(LINE_TYPES))
-    _add_common(inputs, 'Внешний торцовый модуль')
-    inputs.addIntegerSpinnerCommandInput('teeth2', 'Зубьев у парного колеса', 4, 500, 1, 30)
-    inputs.addValueInput('sigma', 'Межосевой угол', 'deg', adsk.core.ValueInput.createByString('90 deg'))
-    inputs.addValueInput('beta', 'Угол наклона зуба (в середине)', 'deg',
-                         adsk.core.ValueInput.createByString('30 deg'))
-    _add_dropdown(inputs, 'hand', 'Направление', HANDS)
-    inputs.addValueInput('alpha', 'Угол профиля', 'deg', adsk.core.ValueInput.createByString('20 deg'))
-    inputs.addValueInput('width', 'Ширина венца', 'mm', adsk.core.ValueInput.createByString('10 mm'))
-    inputs.addValueInput('back', 'Толщина основания', 'mm', adsk.core.ValueInput.createByString('5 mm'))
-    inputs.addValueInput('bore', 'Диаметр отверстия', 'mm', adsk.core.ValueInput.createByString('6 mm'))
-    inputs.addValueInput('backlash', 'Боковой зазор', 'mm', adsk.core.ValueInput.createByString('0.05 mm'))
-    inputs.addIntegerSpinnerCommandInput('sections', 'Сечений по длине зуба', 3, 25, 1, 7)
-    inputs.addBoolValueInput('pair', 'Создать парное колесо', True, '', False)
-    inputs.addValueInput('bore2', 'Отверстие парного колеса', 'mm', adsk.core.ValueInput.createByString('8 mm'))
-    inputs.addBoolValueInput('drive', 'Шарниры и связь движения', True, '', True)
-    inputs.addTextBoxCommandInput('info', 'Расчёт', '', 8, True)
+    _add_choice(inputs, 'line', 'lbl_line')
+    _add_common(inputs, 'lbl_module_outer')
+    inputs.addIntegerSpinnerCommandInput('teeth2', t('lbl_teeth2_bevel'), 4, 500, 1, 30)
+    inputs.addValueInput('sigma', t('lbl_sigma'), 'deg', adsk.core.ValueInput.createByString('90 deg'))
+    inputs.addValueInput('beta', t('lbl_beta_mid'), 'deg', adsk.core.ValueInput.createByString('30 deg'))
+    _add_choice(inputs, 'hand', 'lbl_hand')
+    inputs.addValueInput('cutter', t('lbl_cutter'), 'mm', adsk.core.ValueInput.createByString('0 mm'))
+    inputs.addValueInput('alpha', t('lbl_alpha'), 'deg', adsk.core.ValueInput.createByString('20 deg'))
+    inputs.addValueInput('width', t('lbl_width'), 'mm', adsk.core.ValueInput.createByString('10 mm'))
+    inputs.addValueInput('back', t('lbl_back'), 'mm', adsk.core.ValueInput.createByString('5 mm'))
+    inputs.addValueInput('bore', t('lbl_bore'), 'mm', adsk.core.ValueInput.createByString('6 mm'))
+    inputs.addValueInput('backlash', t('lbl_backlash'), 'mm', adsk.core.ValueInput.createByString('0.05 mm'))
+    inputs.addIntegerSpinnerCommandInput('sections', t('lbl_sections'), 3, 25, 1, 7)
+    inputs.addBoolValueInput('pair', t('lbl_pair_bevel'), True, '', False)
+    inputs.addValueInput('bore2', t('lbl_bore2_bevel'), 'mm', adsk.core.ValueInput.createByString('8 mm'))
+    inputs.addBoolValueInput('drive', t('lbl_drive'), True, '', True)
+    inputs.addTextBoxCommandInput('info', t('lbl_info'), '', 9, True)
     _visibility(inputs)
 
 
 def cyl_build(inputs):
     kind, g1, g2 = cyl_from_inputs(inputs)
-    label = CYL_TYPES[kind].lower()
-    gears = [(g1, f'Шестерня {label} z{g1.z} m{g1.mn * 10:g}')]
+    label = t('kind_' + CYL_KINDS[kind]).lower()
+    gears = [(g1, t('name_pinion', kind=label, z=g1.z, m=f'{g1.mn * 10:g}'))]
     if g2:
-        gears.append((g2, f'Колесо {label} z{g2.z} m{g2.mn * 10:g}'))
+        gears.append((g2, t('name_gear', kind=label, z=g2.z, m=f'{g2.mn * 10:g}')))
     _run_build(lambda c, g, n: build_cylindrical(c, g, kind, n), gears,
                g1.mate_transform(g2) if g2 else None, inputs.itemById('drive').value)
 
 
 def bevel_build(inputs):
     g1, g2 = bevel_from_inputs(inputs)
-    gears = [(g1, f'Коническая z{g1.z}-{g1.z_mate} m{g1.m * 10:g}')]
+    gears = [(g1, t('name_bevel', z=g1.z, zm=g1.z_mate, m=f'{g1.m * 10:g}'))]
     if g2:
-        gears.append((g2, f'Коническая z{g2.z}-{g2.z_mate} m{g2.m * 10:g}'))
+        gears.append((g2, t('name_bevel', z=g2.z, zm=g2.z_mate, m=f'{g2.m * 10:g}')))
     _run_build(build_bevel, gears, g1.mate_transform(g2) if g2 else None, inputs.itemById('drive').value)
 
 
@@ -783,7 +795,7 @@ class _CheckCreated(adsk.core.CommandCreatedEventHandler):
             args.command.execute.add(h)
             _handlers.append(h)
         except Exception:
-            _ui.messageBox('Ошибка:' + chr(10) + traceback.format_exc())
+            _ui.messageBox(t('msg_error') + '\n' + traceback.format_exc())
 
 
 class _CheckExecute(adsk.core.CommandEventHandler):
@@ -791,24 +803,27 @@ class _CheckExecute(adsk.core.CommandEventHandler):
         try:
             design = adsk.fusion.Design.cast(_app.activeProduct)
             if not design:
-                raise GearError('Откройте проект в рабочем пространстве Design')
+                raise GearError('open_design')
             _report_check(design)
         except GearError as e:
-            _ui.messageBox(str(e))
+            _ui.messageBox(strings.error(e))
         except Exception:
-            _ui.messageBox('Не удалось проверить передачу:' + chr(10) + traceback.format_exc())
+            _ui.messageBox(t('msg_check_failed') + '\n' + traceback.format_exc())
 
 
 # --------------------------------------------------------------------------- add-in entry points
 
 COMMANDS = [
-    (CYL_ID, 'Шевронная / косозубая шестерня',
-     'Цилиндрическое колесо с шевронным, косым или прямым эвольвентным зубом',
-     cyl_setup, cyl_from_inputs, cyl_info, cyl_build, presets.CYLINDRICAL),
-    (BEVEL_ID, 'Коническая шестерня',
-     'Коническое колесо с прямым, косым или спиральным зубом',
-     bevel_setup, bevel_from_inputs, bevel_info, bevel_build, presets.BEVEL),
+    (CYL_ID, 'cmd_cyl', cyl_setup, cyl_from_inputs, cyl_info, cyl_build, presets.CYLINDRICAL),
+    (BEVEL_ID, 'cmd_bevel', bevel_setup, bevel_from_inputs, bevel_info, bevel_build, presets.BEVEL),
 ]
+
+
+def _button(cid, text_key):
+    # a definition Fusion still holds on to (e.g. a recently used command) is reused
+    return (_ui.commandDefinitions.itemById(cid) or
+            _ui.commandDefinitions.addButtonDefinition(cid, t(text_key), t(text_key + '_tip'),
+                                                       os.path.join(_HERE, 'resources', cid)))
 
 
 def run(context):
@@ -816,23 +831,17 @@ def run(context):
     try:
         _app = adsk.core.Application.get()
         _ui = _app.userInterface
+        strings.set_language(strings.detect(_app))
         panel = _ui.allToolbarPanels.itemById(PANEL_ID)
         _remove_commands()  # leftovers of a previous run
-        for cid, name, tip, setup, read, info, build, preset_list in COMMANDS:
-            # a definition Fusion still holds on to (e.g. a recently used command) is reused
-            cdef = (_ui.commandDefinitions.itemById(cid) or
-                    _ui.commandDefinitions.addButtonDefinition(cid, name, tip, os.path.join(_HERE, 'resources', cid)))
+        for cid, text_key, setup, read, info, build, preset_list in COMMANDS:
+            cdef = _button(cid, text_key)
             h = _Created(setup, read, info, build, preset_list)
             cdef.commandCreated.add(h)
             _handlers.append(h)
             if panel:
                 panel.controls.addCommand(cdef)
-        cdef = (_ui.commandDefinitions.itemById(CHECK_ID) or
-                _ui.commandDefinitions.addButtonDefinition(
-                    CHECK_ID, 'Проверка зубчатой передачи',
-                    'Ищет противоречивые связи движения (колесо должно крутиться в разные стороны), '
-                    'пересечения колёс и зацепления без связи',
-                    os.path.join(_HERE, 'resources', CHECK_ID)))
+        cdef = _button(CHECK_ID, 'cmd_check')
         h = _CheckCreated()
         cdef.commandCreated.add(h)
         _handlers.append(h)
@@ -841,7 +850,7 @@ def run(context):
             inspect.controls.addCommand(cdef)
     except Exception:
         if _ui:
-            _ui.messageBox('FusionGears: ошибка запуска\n' + traceback.format_exc())
+            _ui.messageBox(t('msg_start_failed') + '\n' + traceback.format_exc())
 
 
 def _buttons():
@@ -867,4 +876,4 @@ def stop(context):
         _handlers.clear()
     except Exception:
         if _ui:
-            _ui.messageBox('FusionGears: ошибка остановки\n' + traceback.format_exc())
+            _ui.messageBox(t('msg_stop_failed') + '\n' + traceback.format_exc())
