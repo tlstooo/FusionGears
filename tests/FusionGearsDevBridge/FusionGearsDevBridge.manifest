@@ -1,0 +1,11 @@
+{
+	"autodeskProduct": "Fusion",
+	"type": "addin",
+	"id": "9d2e4c1a-7b35-4f60-8e21-5a3c9b7d0e44",
+	"author": "",
+	"description": {"": "FusionGears dev bridge (local testing only)"},
+	"version": "0.1.0",
+	"runOnStartup": false,
+	"supportedOS": "windows",
+	"editEnabled": true
+}

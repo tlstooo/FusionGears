@@ -1,0 +1,13 @@
+{
+	"autodeskProduct": "Fusion",
+	"type": "addin",
+	"id": "6f1c2b7e-3a54-4d1e-9b8a-0c5e7f2d4a91",
+	"author": "",
+	"description": {
+		"": "Шевронные, косозубые и конические (прямой, косой, спиральный зуб) эвольвентные шестерни"
+	},
+	"version": "1.0.0",
+	"runOnStartup": true,
+	"supportedOS": "windows|mac",
+	"editEnabled": true
+}

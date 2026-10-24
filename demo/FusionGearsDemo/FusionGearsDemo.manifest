@@ -1,0 +1,8 @@
+{
+	"autodeskProduct": "Fusion",
+	"type": "script",
+	"author": "",
+	"description": {"": "Демонстрационные зубчатые передачи для проверки FusionGears: исправная и с ошибками"},
+	"supportedOS": "windows|mac",
+	"editEnabled": true
+}

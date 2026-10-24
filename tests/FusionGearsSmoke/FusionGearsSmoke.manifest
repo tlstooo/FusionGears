@@ -1,0 +1,8 @@
+{
+	"autodeskProduct": "Fusion",
+	"type": "script",
+	"author": "",
+	"description": {"": "FusionGears smoke test"},
+	"supportedOS": "windows|mac",
+	"editEnabled": true
+}

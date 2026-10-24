@@ -1,0 +1,6 @@
+__pycache__/
+*.pyc
+.vscode/
+# runtime files of the development bridge and Fusion test logs
+tests/bridge/
+tests/fusion_smoke_log.txt
