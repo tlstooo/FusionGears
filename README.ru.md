@@ -57,3 +57,7 @@
 | `tools/make_icons.py` | рисует иконки кнопок |
 
 Проверено в Autodesk Fusion 2703.1.20 под Windows.
+
+## Лицензия
+
+[MIT](LICENSE)

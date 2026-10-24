@@ -57,3 +57,7 @@ The commands appear in **Solid → Create** and **Inspect**. Step-by-step usage 
 | `tools/make_icons.py` | draws the toolbar icons |
 
 Tested with Autodesk Fusion 2703.1.20 on Windows.
+
+## License
+
+[MIT](LICENSE)
