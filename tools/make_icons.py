@@ -34,9 +34,17 @@ def check(x, y):
     tick = (abs(y - (0.15 + 0.9 * (x + 0.35))) < 0.14 and -0.35 < x < -0.05) or            (abs(y - (0.42 - 1.2 * (x + 0.05))) < 0.14 and -0.08 < x < 0.42)
     return (gear(x, y, 10) and math.hypot(x, y) > 0.55) or tick
 
+def bearing(x, y):
+    # outer and inner ring with eight balls between them
+    r = math.hypot(x, y)
+    ball = any(math.hypot(x - 0.6 * math.cos(k * math.pi / 4), y - 0.6 * math.sin(k * math.pi / 4)) < 0.15
+               for k in range(8))
+    return 0.8 < r < 0.97 or 0.24 < r < 0.42 or ball
+
 
 for cid, fn in (('FusionGears_Cylindrical', lambda x, y: gear(x, y, 10, 0.8 if y > 0 else -0.8)),
-                ('FusionGears_Bevel', bevel), ('FusionGears_Check', check)):
+                ('FusionGears_Bevel', bevel), ('FusionGears_Check', check),
+                ('FusionGears_Bearing', bearing)):
     d = os.path.join(ROOT, cid)
     os.makedirs(d, exist_ok=True)
     for name, size in (('16x16.png', 16), ('32x32.png', 32), ('64x64.png', 64),

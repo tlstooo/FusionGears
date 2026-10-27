@@ -21,6 +21,12 @@ TEXT = {
                       'Finds contradictory motion links (a gear that would have to turn both ways), '
                       'intersecting gears and gears in mesh without a link'),
 
+    'cmd_bearing': ('Подшипник', 'Bearing'),
+    'cmd_bearing_tip': ('Радиальный или упорный шариковый подшипник стандартного размера; '
+                        'выберите кромку отверстия или вала — размер подберётся по диаметру',
+                        'Standard size deep groove or thrust ball bearing; pick the edge of a hole '
+                        'or shaft and the size is matched to its diameter'),
+
     # dialog fields
     'lbl_preset': ('Типовой вариант', 'Typical set'),
     'preset_custom': ('Свои параметры', 'Custom'),
@@ -57,6 +63,33 @@ TEXT = {
     'lbl_cutter': ('Радиус резцовой головки (0 — авто)', 'Cutter radius (0 = auto)'),
     'lbl_pair_bevel': ('Создать парное колесо', 'Create mating gear'),
     'lbl_bore2_bevel': ('Отверстие парного колеса', 'Bore of the mating gear'),
+    'lbl_place': ('Место (круговая кромка)', 'Location (circular edge)'),
+    'lbl_place_tip': ('Кромка отверстия или вала; без выбора подшипник ставится в начало координат',
+                      'Edge of a hole or shaft; with none the bearing goes to the origin'),
+    'lbl_match': ('Подобрать размер по кромке', 'Match size to the edge'),
+    'lbl_flip': ('Перевернуть', 'Flip'),
+    'lbl_offset': ('Смещение вдоль оси', 'Offset along the axis'),
+    'lbl_series': ('Серия', 'Series'),
+    'series_mini': ('Миниатюрные 6xx, MR', 'Miniature 6xx, MR'),
+    'series_618': ('Сверхлёгкая 618 (68xx)', 'Extra light 618 (68xx)'),
+    'series_619': ('Особо лёгкая 619 (69xx)', 'Extra light 619 (69xx)'),
+    'series_60': ('Особо лёгкая 60xx', 'Extra light 60xx'),
+    'series_62': ('Лёгкая 62xx', 'Light 62xx'),
+    'series_63': ('Средняя 63xx', 'Medium 63xx'),
+    'series_511': ('Упорные 511xx', 'Thrust 511xx'),
+    'series_512': ('Упорные 512xx', 'Thrust 512xx'),
+    'series_custom_radial': ('Радиальный, свои размеры', 'Radial, custom size'),
+    'series_custom_thrust': ('Упорный, свои размеры', 'Thrust, custom size'),
+    'lbl_size': ('Типоразмер', 'Size'),
+    'size_item': ('{name}  ({d}×{D}×{B})', '{name}  ({d}×{D}×{B})'),
+    'lbl_bearing_d': ('Внутренний диаметр d', 'Bore d'),
+    'lbl_bearing_D': ('Наружный диаметр D', 'Outside diameter D'),
+    'lbl_bearing_B': ('Ширина B (высота H)', 'Width B (height H)'),
+    'lbl_detail': ('Исполнение', 'Detail'),
+    'detail_full': ('Подробное: кольца и шарики', 'Detailed: rings and balls'),
+    'detail_simple': ('Упрощённое: одно тело', 'Simplified: one body'),
+    'lbl_shields': ('Защитные шайбы (2Z)', 'Shields (2Z)'),
+    'lbl_fix': ('Закрепить на детали', 'Fix to the part'),
 
     # calculation
     'unit_mm': ('мм', 'mm'),
@@ -77,6 +110,15 @@ TEXT = {
     'info_face_warn': ('Ширина венца больше рекомендуемой Re/3 = {v}',
                        'Face width exceeds the recommended Re/3 = {v}'),
     'info_gear2_bevel': ('Колесо 2: δ = {delta}, de = {de}', 'Gear 2: δ = {delta}, de = {de}'),
+    'info_bearing': ('Подшипник {name}: d = {d}, D = {D}, {w} = {B}', 'Bearing {name}: d = {d}, D = {D}, {w} = {B}'),
+    'info_balls': ('Шарики: {z} шт. Ø{dw} на диаметре {dp}', 'Balls: {z} × Ø{dw} on a {dp} pitch circle'),
+    'info_place_origin': ('Место: начало координат', 'Location: origin'),
+    'info_place_edge': ('Кромка Ø{v}', 'Edge Ø{v}'),
+    'info_place_fit_d': ('Кромка Ø{v} — посадка по внутреннему диаметру', 'Edge Ø{v} — fits the bore'),
+    'info_place_fit_D': ('Кромка Ø{v} — посадка по наружному диаметру', 'Edge Ø{v} — fits the outside diameter'),
+    'info_place_nofit': ('Кромка Ø{v} не совпадает с d и D подшипника', 'Edge Ø{v} matches neither d nor D'),
+    'info_geometry_note': ('Внутренняя геометрия приближённая; сепаратор не моделируется',
+                           'Internal geometry is approximate; no cage is modelled'),
 
     # parameter errors (gearmath.GearError keys)
     'what_gear': ('Колесо', 'Gear'),
@@ -102,6 +144,13 @@ TEXT = {
                              'The cutter radius {rc:.1f} mm is too small for this face — '
                              'increase it (usually about Rm = {rm:.1f} mm) or set 0'),
     'err_no_profile': ('Не удалось построить замкнутый профиль', 'Could not build a closed profile'),
+    'err_bearing_kind': ('Неизвестный тип подшипника', 'Unknown bearing type'),
+    'err_bearing_zero': ('Внутренний диаметр и ширина должны быть больше нуля',
+                         'The bore and width must be greater than zero'),
+    'err_bearing_outer_small': ('Наружный диаметр должен быть больше внутреннего',
+                                'The outside diameter must exceed the bore'),
+    'err_bearing_too_thin': ('Подшипник слишком тонкий для шариков', 'The bearing is too thin for balls'),
+    'err_bearing_axis': ('Не удалось определить ось по кромке', 'Could not get an axis from the edge'),
     'err_open_design':('Откройте проект в рабочем пространстве Design', 'Open a design in the Design workspace'),
 
     # messages
@@ -109,6 +158,7 @@ TEXT = {
                            'The gears are built, but no joints were made: a Part design has no components.'),
     'msg_error': ('Ошибка:', 'Error:'),
     'msg_build_failed': ('Не удалось построить шестерню:', 'Could not build the gear:'),
+    'msg_bearing_failed': ('Не удалось построить подшипник:', 'Could not build the bearing:'),
     'msg_check_failed': ('Не удалось проверить передачу:', 'Could not check the gear train:'),
     'msg_start_failed': ('FusionGears: ошибка запуска', 'FusionGears: start-up error'),
     'msg_stop_failed': ('FusionGears: ошибка остановки', 'FusionGears: stop error'),
@@ -150,6 +200,16 @@ TEXT = {
     'sk_axis_points': ('{name} — точки оси', '{name} — axis points'),
     'pl_axis': ('{name} — плоскость оси', '{name} — axis plane'),
     'sk_axis': ('{name} — ось вращения', '{name} — rotation axis'),
+    'name_bearing': ('Подшипник {name}', 'Bearing {name}'),
+    'name_bearing_custom': ('{d}×{D}×{B}', '{d}×{D}×{B}'),
+    'name_bearing_fix': ('Посадка {name}', 'Fit {name}'),
+    'sk_section_of': ('{name} — сечение', '{name} — section'),
+    'part_outer_ring': ('Наружное кольцо', 'Outer ring'),
+    'part_inner_ring': ('Внутреннее кольцо', 'Inner ring'),
+    'part_shield': ('Защитная шайба', 'Shield'),
+    'part_shaft_washer': ('Тугое кольцо (на вал)', 'Shaft washer'),
+    'part_housing_washer': ('Свободное кольцо (в корпус)', 'Housing washer'),
+    'part_ball': ('Шарик', 'Ball'),
 }
 
 

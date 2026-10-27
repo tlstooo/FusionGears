@@ -264,7 +264,8 @@ def test_strings():
     for key, (ru, en) in strings.TEXT.items():
         assert ru and en, key
         assert set(re.findall(r'{(\w+)', ru)) == set(re.findall(r'{(\w+)', en)), key
-    src = open(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'gearmath.py'), encoding='utf-8').read()
+    here = os.path.dirname(os.path.abspath(__file__))
+    src = ''.join(open(os.path.join(here, '..', f), encoding='utf-8').read() for f in ('gearmath.py', 'bearingmath.py'))
     for key in set(re.findall(r"GearError\('([a-z_]+)'", src)):
         assert 'err_' + key in strings.TEXT, key
     for lang in ('ru', 'en'):
@@ -276,7 +277,60 @@ def test_strings():
     print('strings: ok')
 
 
+def test_bearings():
+    """Every catalogue size: closed sections, parts and balls without overlap, sane placement."""
+    import bearingmath as bm
+    xz = lambda segs: [(k, [(p[0], p[2]) for p in pts]) for k, pts in segs]
+    cases = [(kind, d / 10, D / 10, B / 10, name)
+             for kind, items in bm.SERIES.values() for name, d, D, B in items]
+    cases += [('radial', 0.5, 4.0, 0.4, 'thin'), ('thrust', 0.3, 0.9, 0.8, 'tall')]
+    for kind, d, D, B, name in cases:
+        for shields in (False, True):
+            b = bm.Bearing(kind, d, D, B, shields=shields, name=name)
+            parts = [segs for _, segs in b.rings()]
+            for segs in parts + [b.ball(), b.simple()]:
+                check_chain(segs)
+            polys = [polygon(xz(segs)) for segs in parts]
+            ball = polygon(xz(b.ball())) + [(b.rc - b.Dw / 2, b.zc)]
+            for poly in polys:
+                assert all(d / 2 - 1e-9 <= x <= D / 2 + 1e-9 and -1e-9 <= z <= B + 1e-9 for x, z in poly), name
+                gap = min(math.dist((b.rc, b.zc), p) for p in poly)
+                assert gap > b.Dw / 2 and not inside((b.rc, b.zc), poly), (name, gap, b.Dw)
+            # parts may touch (a shield on the outer ring) but not overlap
+            step = B / 97
+            for i in range(97):
+                for j in range(97):
+                    pt = (d / 2 + (D - d) / 2 * (i + 0.37) / 97, step * (j + 0.41))
+                    assert sum(inside(pt, poly) for poly in polys) <= 1, (name, pt)
+            assert 2 * b.rc * math.sin(math.pi / b.z) > b.Dw, name   # neighbouring balls
+            assert b.z >= 3 and ball
+    hit = bm.match_diameter(2.2, 'mini', 'radial', 9)
+    assert hit == ('mini', 9, 'D'), hit                                  # 608 kept for a 22 mm hole
+    assert bm.match_diameter(2.2, 'mini', 'radial', 6)[1] == 6           # a chosen 627 stays
+    assert bm.match_diameter(2.2, '62', 'radial') == ('mini', 9, 'D')    # else the popular 608
+    assert bm.match_diameter(1.5, '62', 'radial') == ('62', 2, 'd')      # 6202 on a 15 mm shaft
+    assert bm.match_diameter(1.52, '62', 'radial') == ('62', 2, 'd')     # within the tolerance
+    assert bm.match_diameter(1.56, '62', 'radial') is None
+    assert bm.match_diameter(2.0, '511', 'thrust')[0] == '511'
+    assert bm.find_size(1.5, 3.5, 1.1, '62') == 2 and bm.find_size(1.5, 3.5, 1.2, '62') is None
+    m = bm.placement((1, 2, 3), (0, 0, 2), toward=(1, 2, 1), offset=0.5)
+    assert close(gm.apply(m, (0, 0, 0)), (1, 2, 2.5)) and close([r[2] for r in m[:3]], (0, 0, -1))
+    m = bm.placement((0, 0, 0), (1, 1, 0), flip=True)
+    cols = [[r[k] for r in m[:3]] for k in range(3)]
+    for a in range(3):
+        for c in range(3):
+            assert abs(sum(x * y for x, y in zip(cols[a], cols[c])) - (a == c)) < 1e-12
+    for kw in (dict(d=0, D=1, B=1), dict(d=1, D=1, B=1), dict(d=1, D=2, B=0)):
+        try:
+            bm.Bearing('radial', **kw)
+            raise AssertionError(kw)
+        except gm.GearError as e:
+            assert strings.error(e) != str(e)
+    print('bearings OK:', len(cases), 'sizes')
+
+
 if __name__ == '__main__':
+    test_bearings()
     test_strings()
     test_mesh_phase()
     test_gearcheck()

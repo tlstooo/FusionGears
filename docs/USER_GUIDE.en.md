@@ -148,14 +148,29 @@ Why the "wrong" gears move in the animation at all: Fusion does not look at teet
 
 Add your own sets to `presets.py`: names in both languages, lengths in millimetres, angles in degrees, list items by their key (`herringbone`, `gleason`, `right`, …).
 
-## 9. 3D printing tips
+## 9. Bearing
+
+**Solid → Create → Bearing** places a standard size ball bearing.
+
+1. **Location (circular edge)** — click the edge of a hole or shaft. The bearing becomes coaxial with it, with its face on the edge plane, and goes into the hole or along the shaft (the direction comes from the adjacent cylindrical face). With no edge the bearing goes to the origin along Z.
+2. **Match size to the edge** — when you pick an edge, the add-in looks for a bearing whose bore d or outside diameter D equals the edge diameter (within 0.3 mm). The selected size stays if it fits; otherwise a fitting size of the current series is taken, then of the other series of the same type, preferring a common size (608, 625, 6202…) when several fit. A 22 mm hole keeps a 608, for example, and a 15 mm shaft in the 62 series gets a 6202.
+3. **Flip** and **Offset along the axis** — if the bearing went the wrong way or has to be recessed.
+4. **Series** and **Size** — deep groove 6xx/MR (miniature, including the 608 and 625 used in 3D printers), 618 (68xx), 619 (69xx), 60, 62, 63 and thrust 511, 512. The custom entries open the d, D, B fields for any size.
+5. **Detail**: detailed — outer and inner ring with raceways and balls, optionally shields (2Z); simplified — one body of the envelope, for large assemblies.
+6. **Fix to the part** — a rigid joint between the bearing and the part whose edge you picked, so the bearing moves with it. If the edge belongs to the root component, the bearing is grounded instead.
+
+The bearing gets its own component "Bearing 608-2Z" and its own timeline group; a preview shows while the dialog is open. In a thrust bearing the shaft washer (bore d) sits on the edge and the housing washer (outside diameter D) on top.
+
+Boundary dimensions d × D × B (H) follow ISO 15 and ISO 104. Ball size and count and raceway depth are approximate proportions, not manufacturer data; no cage is modelled.
+
+## 10. 3D printing tips
 
 - Backlash 0.1–0.2 mm for FDM, 0.05 mm or less for resin.
 - Keep at least 14–15 teeth: without profile shift, small gears are undercut.
 - Module 1 mm or more for a 0.4 mm FDM nozzle; module 0.5 is at the limit.
 - Herringbone gears print better than helical ones: no overhangs, no axial force.
 
-## 10. Troubleshooting
+## 11. Troubleshooting
 
 | Symptom | Cause |
 |---|---|
@@ -165,5 +180,7 @@ Add your own sets to `presets.py`: names in both languages, lengths in millimetr
 | The cutter radius … is too small | increase the Gleason cutter radius or set 0 |
 | The other gear does not turn | Animate Joint was used; use Animate Joint Relationships |
 | Gears turn the same way | the link is reversed — run the gear train check, it names the link |
+| The bearing went the wrong way | tick Flip or set an offset |
+| The size was not matched to the edge | the edge diameter differs from d and D by more than 0.3 mm, or the series is of the other type — pick the size by hand |
 | Dialogs in the wrong language | they follow Fusion's language; change it in Preferences and restart Fusion |
 | "a command definition with that id already exists" | the add-in was restarted many times in one session; restart Fusion |

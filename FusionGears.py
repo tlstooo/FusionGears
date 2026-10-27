@@ -1,4 +1,4 @@
-"""FusionGears — herringbone/helical and bevel (straight, skew, spiral, Gleason) gear generator."""
+"""FusionGears — herringbone/helical and bevel (straight, skew, spiral, Gleason) gear generator, ball bearings."""
 import adsk.core
 import adsk.fusion
 import importlib
@@ -11,11 +11,13 @@ _HERE = os.path.dirname(os.path.abspath(__file__))
 if _HERE not in sys.path:
     sys.path.insert(0, _HERE)
 import gearmath  # noqa: E402
+import bearingmath  # noqa: E402
 import presets  # noqa: E402
 import gearcheck  # noqa: E402
 import strings  # noqa: E402
 importlib.reload(strings)
 importlib.reload(gearmath)
+importlib.reload(bearingmath)
 importlib.reload(presets)
 importlib.reload(gearcheck)
 from gearmath import GearError  # noqa: E402
@@ -26,6 +28,7 @@ INSPECT_PANEL_ID = 'InspectPanel'
 CYL_ID = 'FusionGears_Cylindrical'
 BEVEL_ID = 'FusionGears_Bevel'
 CHECK_ID = 'FusionGears_Check'
+BEARING_ID = 'FusionGears_Bearing'
 
 _app = None
 _ui = None
@@ -100,11 +103,14 @@ def _matrix(m):
     return mat
 
 
-def _target_component(design, name):
-    """(component, occurrence) — a new component when the design allows it, otherwise (root, None)."""
+def _target_component(design, name, m=None):
+    """(component, occurrence) — a new component when the design allows it, otherwise (root, None).
+
+    m places the new occurrence (identity by default).
+    """
     root = design.rootComponent
     try:
-        occ = root.occurrences.addNewComponent(adsk.core.Matrix3D.create())
+        occ = root.occurrences.addNewComponent(_matrix(m) if m else adsk.core.Matrix3D.create())
         occ.component.name = name
         return occ.component, occ
     except Exception:
@@ -515,8 +521,10 @@ def _run_build(builder, gears, transform, drive=False):
 
 CYL_KINDS = ['herringbone', 'helical', 'spur']   # index = kind passed to build_cylindrical
 HANDS = ['right', 'left']
+BEARING_DETAILS = ['full', 'simple']
 DROPDOWNS = {'kind': (CYL_KINDS, 'kind_'), 'line': (list(gearmath.TOOTH_LINES), 'line_'),
-             'hand': (HANDS, 'hand_')}
+             'hand': (HANDS, 'hand_'), 'series': (bearingmath.SERIES_KEYS, 'series_'),
+             'detail': (BEARING_DETAILS, 'detail_')}
 
 
 def _value(inputs, iid):
@@ -640,18 +648,22 @@ def _set_info(inputs, text):
 # --------------------------------------------------------------------------- event handlers
 
 class _Created(adsk.core.CommandCreatedEventHandler):
-    def __init__(self, setup, read, info, build, preset_list):
+    """changed(inputs, changed_input) reacts to an edited input; preview builds while the dialog is open."""
+
+    def __init__(self, setup, read, info, build, changed, preview=False, fail_key='msg_build_failed'):
         super().__init__()
         self.setup, self.read, self.info, self.build = setup, read, info, build
-        self.presets = preset_list
+        self.changed, self.preview, self.fail_key = changed, preview, fail_key
 
     def notify(self, args):
         try:
             cmd = args.command
             cmd.isRepeatable = False
             self.setup(cmd.commandInputs)
-            for event, cls in ((cmd.execute, _Execute), (cmd.inputChanged, _Changed),
-                               (cmd.validateInputs, _Validate)):
+            events = [(cmd.execute, _Execute), (cmd.inputChanged, _Changed), (cmd.validateInputs, _Validate)]
+            if self.preview:
+                events.append((cmd.executePreview, _Preview))
+            for event, cls in events:
                 h = cls(self)
                 event.add(h)
                 _handlers.append(h)
@@ -676,14 +688,20 @@ class _Changed(adsk.core.InputChangedEventHandler):
     def notify(self, args):
         try:
             inputs = args.inputs.command.commandInputs
-            if args.input.id == 'preset':
-                index = args.input.selectedItem.index
-                if index > 0:   # item 0 keeps the current values
-                    apply_preset(inputs, self.owner.presets[index - 1][1])
-            _visibility(inputs)
+            self.owner.changed(inputs, args.input)
             self.owner.refresh(inputs)
         except Exception:
             pass
+
+
+def _gear_changed(preset_list):
+    def changed(inputs, changed_input):
+        if changed_input.id == 'preset':
+            index = changed_input.selectedItem.index
+            if index > 0:   # item 0 keeps the current values
+                apply_preset(inputs, preset_list[index - 1][1])
+        _visibility(inputs)
+    return changed
 
 
 class _Validate(adsk.core.ValidateInputsEventHandler):
@@ -709,7 +727,21 @@ class _Execute(adsk.core.CommandEventHandler):
         except GearError as e:
             _ui.messageBox(strings.error(e))
         except Exception:
-            _ui.messageBox(t('msg_build_failed') + '\n' + traceback.format_exc())
+            _ui.messageBox(t(self.owner.fail_key) + '\n' + traceback.format_exc())
+
+
+class _Preview(adsk.core.CommandEventHandler):
+    """Builds into the preview; Fusion rolls it back and runs execute on OK."""
+
+    def __init__(self, owner):
+        super().__init__()
+        self.owner = owner
+
+    def notify(self, args):
+        try:
+            self.owner.build(args.command.commandInputs)
+        except Exception:
+            pass   # the dialog's calculation text already explains bad parameters
 
 
 def _visibility(inputs):
@@ -786,6 +818,216 @@ def bevel_build(inputs):
     _run_build(build_bevel, gears, g1.mate_transform(g2) if g2 else None, inputs.itemById('drive').value)
 
 
+# --------------------------------------------------------------------------- bearings
+
+_syncing = False   # set while the bearing dialog changes its own inputs
+
+
+def _g(v_cm):
+    return f'{v_cm * 10:g}'
+
+
+def _edge(inputs):
+    sel = inputs.itemById('place')
+    return sel.selection(0).entity if sel.selectionCount else None
+
+
+def _edge_place(edge):
+    """Centre, normal, diameter and a point of the adjacent cylinder of a circular edge (cm)."""
+    geo = edge.geometry
+    toward = None
+    for face in edge.faces:
+        if face.geometry.surfaceType == adsk.core.SurfaceTypes.CylinderSurfaceType:
+            p = face.pointOnFace
+            toward = (p.x, p.y, p.z)
+            break
+    c, n = geo.center, geo.normal
+    return dict(center=(c.x, c.y, c.z), normal=(n.x, n.y, n.z), dia=2 * geo.radius,
+                toward=toward, occ=edge.assemblyContext)
+
+
+def _fill_sizes(inputs, series, index=None):
+    """Sizes of a series in the size dropdown; selects index, else the size in the d/D/B fields, else the first."""
+    dd = adsk.core.DropDownCommandInput.cast(inputs.itemById('size'))
+    dd.listItems.clear()
+    items = bearingmath.sizes(series)
+    for name, d, D, B in items:
+        dd.listItems.add(t('size_item', name=name, d=f'{d:g}', D=f'{D:g}', B=f'{B:g}'), False)
+    if not items:
+        dd.listItems.add('—', True)
+        return
+    if index is None:
+        index = bearingmath.find_size(_value(inputs, 'bearing_d'), _value(inputs, 'bearing_D'),
+                                      _value(inputs, 'bearing_B'), series) or 0
+    dd.listItems.item(index).isSelected = True
+    _set_size(inputs, series, index)
+
+
+def _set_size(inputs, series, index):
+    _, d, D, B = bearingmath.sizes(series)[index]
+    for iid, v in (('bearing_d', d), ('bearing_D', D), ('bearing_B', B)):
+        inputs.itemById(iid).expression = f'{v:g} mm'
+
+
+def _bearing_visibility(inputs):
+    series = _choice(inputs, 'series')
+    custom = series in bearingmath.CUSTOM
+    inputs.itemById('size').isVisible = not custom
+    for iid in ('bearing_d', 'bearing_D', 'bearing_B'):
+        inputs.itemById(iid).isEnabled = custom
+    inputs.itemById('shields').isVisible = (bearingmath.kind_of(series) == 'radial'
+                                            and _choice(inputs, 'detail') == 'full')
+    inputs.itemById('fix').isVisible = _edge(inputs) is not None
+
+
+def bearing_changed(inputs, changed_input):
+    global _syncing
+    if _syncing:
+        return
+    _syncing = True
+    try:
+        iid = changed_input.id
+        series = _choice(inputs, 'series')
+        if iid == 'series':
+            _fill_sizes(inputs, series)
+        elif iid == 'size' and series not in bearingmath.CUSTOM:
+            _set_size(inputs, series, inputs.itemById('size').selectedItem.index)
+        elif iid in ('place', 'match') and inputs.itemById('match').value:
+            edge = _edge(inputs)
+            if edge is not None:
+                size = None if series in bearingmath.CUSTOM else inputs.itemById('size').selectedItem.index
+                hit = bearingmath.match_diameter(_edge_place(edge)['dia'], series,
+                                                 bearingmath.kind_of(series), size)
+                if hit:
+                    found, index, _ = hit
+                    dd = inputs.itemById('series')
+                    dd.listItems.item(bearingmath.SERIES_KEYS.index(found)).isSelected = True
+                    _fill_sizes(inputs, found, index)
+        _bearing_visibility(inputs)
+    finally:
+        _syncing = False
+
+
+def bearing_from_inputs(inputs):
+    series = _choice(inputs, 'series')
+    d, D, B = (_value(inputs, iid) for iid in ('bearing_d', 'bearing_D', 'bearing_B'))
+    full = _choice(inputs, 'detail') == 'full'
+    shields = full and inputs.itemById('shields').value
+    index = bearingmath.find_size(d, D, B, series)
+    if index is None:
+        name = t('name_bearing_custom', d=_g(d), D=_g(D), B=_g(B))
+    else:
+        name = bearingmath.sizes(series)[index][0] + ('-2Z' if shields and bearingmath.kind_of(series) == 'radial' else '')
+    b = bearingmath.Bearing(bearingmath.kind_of(series), d, D, B, shields=shields, name=name)
+    edge = _edge(inputs)
+    return b, full, (_edge_place(edge) if edge is not None else None)
+
+
+def bearing_info(b, full, place):
+    i = b.info()
+    w = 'B' if b.kind == 'radial' else 'H'
+    lines = [t('info_bearing', name=b.name, d=_mm(i['d']), D=_mm(i['D']), w=w, B=_mm(i['B']))]
+    if full:
+        lines.append(t('info_balls', z=i['z'], dw=_mm(i['Dw']), dp=_mm(i['dp'])))
+    if place is None:
+        lines.append(t('info_place_origin'))
+    else:
+        dia = place['dia']
+        key = ('info_place_fit_d' if abs(dia - b.d) <= bearingmath.MATCH_TOL else
+               'info_place_fit_D' if abs(dia - b.D) <= bearingmath.MATCH_TOL else 'info_place_nofit')
+        lines.append(t(key, v=_mm(dia)))
+    if full:
+        lines.append(t('info_geometry_note'))
+    return '<br>'.join(lines)
+
+
+def _revolve(comp, segs, name, axis=None):
+    """Body of a section revolved a full turn; axis(sketch) picks the axis, default the component Z."""
+    sk = comp.sketches.add(comp.xZConstructionPlane)
+    sk.name = t('sk_section_of', name=name)
+    sk.isComputeDeferred = True
+    _draw_closed(sk, segs, _model_to_sketch(sk))
+    sk.isComputeDeferred = False
+    revolves = comp.features.revolveFeatures
+    rin = revolves.createInput(_largest_profile(sk), axis(sk) if axis else comp.zConstructionAxis,
+                               adsk.fusion.FeatureOperations.NewBodyFeatureOperation)
+    rin.setAngleExtent(False, adsk.core.ValueInput.createByString('360 deg'))
+    body = revolves.add(rin).bodies.item(0)
+    body.name = name
+    sk.isVisible = False
+    return body
+
+
+def build_bearing(comp, b, full):
+    """Bodies of the bearing in comp, axis Z from z = 0."""
+    if not full:
+        return [_revolve(comp, b.simple(), b.name)]
+    bodies = [_revolve(comp, segs, t(key)) for key, segs in b.rings()]
+    ball = _revolve(comp, b.ball(), t('part_ball'), lambda sk: sk.sketchCurves.sketchLines.item(0))
+    pat_in = comp.features.circularPatternFeatures.createInput(_collection([ball]), comp.zConstructionAxis)
+    pat_in.quantity = adsk.core.ValueInput.createByReal(b.z)
+    pat_in.totalAngle = adsk.core.ValueInput.createByString('360 deg')
+    pattern = comp.features.circularPatternFeatures.add(pat_in)
+    balls = [ball] + [x for x in pattern.bodies if x != ball]
+    for i, x in enumerate(balls):
+        x.name = f'{t("part_ball")} {i + 1}'
+    return bodies + balls
+
+
+def _fix(design, occ, target):
+    """Rigid as-built joint of the bearing to the part of the picked edge; grounds it when there is none."""
+    if target is not None:
+        try:
+            inp = design.rootComponent.asBuiltJoints.createInput(occ, target, None)
+            inp.setAsRigidJointMotion()
+            joint = design.rootComponent.asBuiltJoints.add(inp)
+            joint.name = t('name_bearing_fix', name=occ.component.name)
+            return
+        except Exception:
+            pass
+    occ.isGrounded = True
+
+
+def bearing_build(inputs):
+    b, full, place = bearing_from_inputs(inputs)
+    design = adsk.fusion.Design.cast(_app.activeProduct)
+    if not design:
+        raise GearError('open_design')
+    p = place or dict(center=(0, 0, 0), normal=(0, 0, 1), toward=None, occ=None)
+    m = bearingmath.placement(p['center'], p['normal'], p['toward'], inputs.itemById('flip').value,
+                              _value(inputs, 'offset'))
+    name = t('name_bearing', name=b.name)
+    start = _timeline_count(design)
+    comp, occ = _target_component(design, name, m)
+    bodies = build_bearing(comp, b, full)
+    if occ is None:
+        for body in bodies:
+            _move(comp, body, m)
+    elif place is not None and inputs.itemById('fix').value:
+        _fix(design, occ, place['occ'])
+    _group_timeline(design, start, name)
+
+
+def bearing_setup(inputs):
+    sel = inputs.addSelectionInput('place', t('lbl_place'), t('lbl_place_tip'))
+    sel.addSelectionFilter('CircularEdges')
+    sel.setSelectionLimits(0, 1)
+    inputs.addBoolValueInput('match', t('lbl_match'), True, '', True)
+    inputs.addBoolValueInput('flip', t('lbl_flip'), True, '', False)
+    inputs.addValueInput('offset', t('lbl_offset'), 'mm', adsk.core.ValueInput.createByString('0 mm'))
+    _add_choice(inputs, 'series', 'lbl_series')
+    _add_dropdown(inputs, 'size', t('lbl_size'), [])
+    inputs.addValueInput('bearing_d', t('lbl_bearing_d'), 'mm', adsk.core.ValueInput.createByString('8 mm'))
+    inputs.addValueInput('bearing_D', t('lbl_bearing_D'), 'mm', adsk.core.ValueInput.createByString('22 mm'))
+    inputs.addValueInput('bearing_B', t('lbl_bearing_B'), 'mm', adsk.core.ValueInput.createByString('7 mm'))
+    _add_choice(inputs, 'detail', 'lbl_detail')
+    inputs.addBoolValueInput('shields', t('lbl_shields'), True, '', False)
+    inputs.addBoolValueInput('fix', t('lbl_fix'), True, '', True)
+    inputs.addTextBoxCommandInput('info', t('lbl_info'), '', 5, True)
+    _fill_sizes(inputs, bearingmath.SERIES_KEYS[0])   # miniature series, 608 from the fields
+    _bearing_visibility(inputs)
+
+
 class _CheckCreated(adsk.core.CommandCreatedEventHandler):
     """Command without inputs: Fusion executes it right after creation."""
 
@@ -814,8 +1056,12 @@ class _CheckExecute(adsk.core.CommandEventHandler):
 # --------------------------------------------------------------------------- add-in entry points
 
 COMMANDS = [
-    (CYL_ID, 'cmd_cyl', cyl_setup, cyl_from_inputs, cyl_info, cyl_build, presets.CYLINDRICAL),
-    (BEVEL_ID, 'cmd_bevel', bevel_setup, bevel_from_inputs, bevel_info, bevel_build, presets.BEVEL),
+    (CYL_ID, 'cmd_cyl', lambda: _Created(cyl_setup, cyl_from_inputs, cyl_info, cyl_build,
+                                         _gear_changed(presets.CYLINDRICAL))),
+    (BEVEL_ID, 'cmd_bevel', lambda: _Created(bevel_setup, bevel_from_inputs, bevel_info, bevel_build,
+                                             _gear_changed(presets.BEVEL))),
+    (BEARING_ID, 'cmd_bearing', lambda: _Created(bearing_setup, bearing_from_inputs, bearing_info, bearing_build,
+                                                 bearing_changed, preview=True, fail_key='msg_bearing_failed')),
 ]
 
 
@@ -834,9 +1080,9 @@ def run(context):
         strings.set_language(strings.detect(_app))
         panel = _ui.allToolbarPanels.itemById(PANEL_ID)
         _remove_commands()  # leftovers of a previous run
-        for cid, text_key, setup, read, info, build, preset_list in COMMANDS:
+        for cid, text_key, handler in COMMANDS:
             cdef = _button(cid, text_key)
-            h = _Created(setup, read, info, build, preset_list)
+            h = handler()
             cdef.commandCreated.add(h)
             _handlers.append(h)
             if panel:

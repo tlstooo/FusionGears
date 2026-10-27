@@ -4,9 +4,9 @@
 	"id": "6f1c2b7e-3a54-4d1e-9b8a-0c5e7f2d4a91",
 	"author": "",
 	"description": {
-		"": "Herringbone, helical and bevel (straight, skew, spiral, Gleason) involute gears / Шевронные, косозубые и конические шестерни"
+		"": "Herringbone, helical and bevel (straight, skew, spiral, Gleason) involute gears, ball bearings / Шевронные, косозубые и конические шестерни, подшипники"
 	},
-	"version": "1.1.0",
+	"version": "1.2.0",
 	"runOnStartup": true,
 	"supportedOS": "windows|mac",
 	"editEnabled": true
